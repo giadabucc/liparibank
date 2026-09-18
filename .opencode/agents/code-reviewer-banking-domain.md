@@ -1,7 +1,6 @@
 ---
 name: code-reviewer-banking-domain
 description: Review domain-aware del codice Spring Boot per LipariBank — focus su transazioni atomiche, idempotency, gestione password BCrypt, JWT secret handling, pattern banking (importi BigDecimal, no double), audit trail. Da invocare prima del merge di ogni PR che tocca domain/movement, domain/account, domain/user.
-tools: [Read, Grep, Glob, Bash]
 model: claude-sonnet-4-6
 ---
 

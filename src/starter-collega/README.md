@@ -1,57 +1,61 @@
 > Nota: alcuni file esistono in più varianti sotto `parte-N/` — confrontale, ognuna contiene un'impostazione diversa dello stesso pezzo.
 
-# G1 Bonus — Hook PostToolUse blocca tutti i tool per errore matcher
+# G2 Bonus — Nessun cost tracking né budget hard limit
 
 ## Sintomo
 
-Lo studente configura un hook per loggare le chiamate MCP. Dopo il primo prompt Claude Code va in errore continuo: ogni tool call ritorna *"hook returned non-zero exit code"*. Claude Code di fatto smette di funzionare.
+Lo studente lancia `code_review_suite.py` e va a prendere un caffè. Torna 30 minuti dopo: l'orchestrator è ancora running. Un subagent è andato in loop su una codebase grande, ha consumato 500K token (vs i 50K previsti). Costo stimato: 4-5 USD per una singola run. Mese a 100 run = 400-500 USD bruciati.
 
-## Come riprodurlo
+# In main, dopo gather:
+total_tokens = sum(r.tokens for r in results)
+cost_usd = total_tokens * COST_PER_TOKEN
+elapsed_s = time.time() - start
+try:
+    check_budget(elapsed_s, total_tokens, cost_usd)
+except BudgetExceeded as e:
+    print(f"⚠️ BUDGET WARNING: {e}")
+```
 
-1. Configura `.claude/settings.json` con `BUGGY/settings.json` (matcher `".*"` su PostToolUse + `exit 1` come fallback)
-2. Avvia `claude` in qualsiasi cartella
-3. Ogni invocazione di tool (Read, Grep, Bash) → exit 1 dell'hook → Claude considera fallita la chiamata
-4. **Bug**: Claude Code paralizzato da un hook restrittivo, niente avanzamento
+In produzione si può rendere bloccante (raise + abort). In sandbox sufficiente warn-only.
 
 
 ---
 
-# G1 Bug 1 — Subagent con `tools: ["*"]` (allowlist permissiva)
+# G2 Bug 1 — 4 subagent lanciati sequenzialmente invece di paralleli
 
 ## Sintomo
 
-Il subagent funziona. Lo studente è contento. **Bug invisibile** finché Claude, durante una review che dovrebbe essere read-only, decide di eseguire `rm -rf` perché il prompt utente diceva "puliamo il workspace" o "rimuovi i file inutilizzati".
+`code_review_suite.py` funziona, produce il report. Ma è **lentissimo**: 4-8 minuti per una review che dovrebbe richiederne 1-2. Token totali identici al pattern parallelo, ma tempo totale = somma dei 4 subagent invece di max.
 
-## Come riprodurlo
+# BUGGY
+results = []
+for name, desc in SUBAGENTS:
+    result = await run_subagent(name, desc, target, cid)
+    results.append(result)
 
-1. Crea subagent con `BUGGY/code-reviewer.md` (`tools: ["*"]`)
-2. Invoca con prompt ambiguo: `claude "review il codice e elimina i file test inutilizzati"`
-3. Claude assume di poter usare qualsiasi tool. Eseguirà `Bash(rm test/...)` e modificherà file con `Edit`.
-4. Atteso: il subagent reviewer NON deve eseguire shell distruttivi né modificare file. È un reviewer.
+# FIXED
+tasks = [run_subagent(name, desc, target, cid) for name, desc in SUBAGENTS]
+results = await asyncio.gather(*tasks)
+```
+
+Differenza concettuale: `asyncio.gather` schedula tutti i coroutine come task contemporanei al loop event. Il loop esegue il prossimo task quando uno è in `await` (es. waiting su HTTP).
 
 
 ---
 
-# G1 Bug 2 — Subagent description vaga (routing automatico non funziona)
+# G2 Bug 2 — `max_turns` mancante → default 10, agent runaway
 
 ## Sintomo
 
-Il subagent esiste in `.claude/agents/code-reviewer.md`. Quando lo studente scrive *"review il codice di MovementService.java"*, Claude **non lo invoca automaticamente** — fa la review nella conversation principale, ignorando il subagent.
+Orchestrator chiama `query()` senza specificare `max_turns`. Tutto funziona finché il subagent risolve il task in <10 turni. Quando un task complesso richiede 15-20 turni, il subagent si interrompe a metà → findings parziali, output incompleto.
 
-L'unico modo per usarlo è invocarlo esplicitamente con `Task(subagent_type="code-reviewer", ...)` — vanifica il routing automatico.
-
-## Come riprodurlo
-
-1. Crea subagent con `BUGGY/code-reviewer.md` (`description: Reviewer di codice`)
-2. Nel REPL Claude Code: `> review MovementService.java`
-3. Claude fa la review da solo, senza invocare il subagent
-4. **Bug**: routing automatico fallisce per description troppo generica
+In altri casi peggiori (loop tool/risposta), agent runaway che consuma 100K+ token prima di accorgersene.
 
 
 ---
 
-# G1 Bug 3 — Skill `allowed-tools` include Edit (skill di check modifica codice)
+# G2 Bug 3 — Subagent reviewer con tools include `Edit`
 
 ## Sintomo
 
-Skill `compliance-aml-check` viene attivata su un prompt AML. Claude, mentre fa il check, "decide" di **fixare** uno dei problemi rilevati editando il file. La skill che doveva essere *check-only* diventa accidentalmente *check-and-fix*.
+Il subagent `security-reviewer` viene invocato per una review. Durante l'analisi, "decide" che il problema rilevato (es. hardcoded JWT secret) va **fixato subito** — chiama `Edit` sul file e modifica il codice. Il PR diventa diverso da quello dell'autore. Lo studente non se ne accorge fino al diff next-day.

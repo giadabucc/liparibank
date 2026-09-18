@@ -302,3 +302,46 @@ Nel repo esisteva anche una cartella `.opencode/` (config per OpenCode CLI, "Pat
 7. **API key in chiaro in `opencode.local.json`.** Il file (correttamente in `.gitignore`) contiene una API key OpenCode Zen in chiaro su disco. Non è un difetto dello starter Claude Code in senso stretto, ma una nota di sicurezza operativa: se il `.gitignore` non fosse stato corretto (punto 4) o il file venisse copiato/zippato altrove, la chiave sarebbe esposta.
 
 **Bonus — difetti nel codice applicativo trovati dal subagent** (non nello starter Claude Code, ma nel progetto Spring stesso): il subagent `code-reviewer-banking-domain`, invocato sulla PR reale, ha trovato due bug CRITICAL non pianificati oltre ai 3 anti-pattern intenzionali — **IDOR** su `transfer`/`getAccount`/`listByAccount` (nessun controllo che l'utente autenticato sia proprietario del conto) e una **race condition sul saldo** (nessun lock/`@Version`, possibile lost update / double-spend). Dettagli in [docs/claude-code-assets/subagent-run.md](docs/claude-code-assets/subagent-run.md).
+
+---
+
+# Giorno 2 — Multi-Agent Orchestration (G2)
+
+**Path seguito: Path B (OpenCode)** — nessun credito Claude Pro/Max/API key disponibile per `claude-agent-sdk`. L'orchestrator lancia `opencode run` (CLI OpenCode, v1.18.31) come subprocess invece di usare l'SDK Python di Claude direttamente.
+
+## Decidi e motiva
+
+**Quanti subagent specializzati lanci in parallelo, e perché non di più?**
+4: `code-reviewer-banking-domain`, `security-reviewer`, `performance-reviewer`, `rest-contract-reviewer` — dimensioni ortogonali (dominio banking, sicurezza, performance, contratto API). Non di più: valore marginale decrescente (il 5° reviewer specializzato aggiunge una frazione del valore del 1°) a fronte di costo e latenza lineari nel numero di subagent, più complessità di coordinamento. Prova concreta da questa sessione: nelle run reali, `security-reviewer` e `rest-contract-reviewer` hanno segnalato **lo stesso problema di idempotency** su `MovementService.transfer()` — un 5° reviewer generico avrebbe quasi certamente prodotto altri duplicati, non nuovo segnale.
+
+**Perché orchestri in parallelo e non in sequenza?**
+Sequenziale = tempo totale ≈ somma dei 4 subagent; parallelo (`asyncio.gather`) = tempo totale ≈ il più lento dei 4. È esattamente il G2 Bug 1 documentato in `starter-collega/`. Prova concreta: nella run reale con stagger da 3s, i 4 processi si sono sovrapposti ampiamente (log timestamp) e il tempo totale è rimasto vicino alla durata del subagent più lento, non alla somma di tutti e 4.
+
+**In quali punti il tuo orchestrator può fallire?**
+- **Subagent mancante**: `.claude/agents/{name}.md` assente → `FileNotFoundError`, catturata da `return_exceptions=True` in `asyncio.gather` senza far crashare l'intera run.
+- **Parse JSON fragile**: se il modello non produce un array JSON valido, `extract_json_array` ritorna `[]` silenziosamente — degradazione silenziosa, non crash: un fallimento di parsing è indistinguibile da "nessun finding" nel report, rischio reale non ancora completamente mitigato.
+- **Budget exceeded**: gestito come warning non bloccante (`check_budget`), coerente col G2 Bonus (niente budget tracking) trovato nello starter di Gino.
+- **Path errato al binario**: bug reale trovato in questa sessione — `asyncio.create_subprocess_exec("opencode", ...)` su Windows risolve allo shim `.cmd` npm, che ri-parsa la riga di comando via `cmd.exe` e corrompe un messaggio lungo (diff + system prompt), facendo cadere silenziosamente `--agent`/`--format` e rispondendo con l'agente di default invece di fallire in modo esplicito — il fallimento più insidioso perché sembra funzionare ma produce dati sbagliati. Fix: risoluzione esplicita dell'eseguibile reale (`opencode.exe`), non dello shim.
+- **Contesa su risorse condivise**: 4 processi `opencode` concorrenti contendono lo stesso storage locale di sessione (SQLite) → `database is locked`. Reale, riscontrato in più run. Mitigato (non eliminato) con retry su errori transitori + stagger di 3s tra i lanci.
+
+## Code Review Suite
+
+### Asset
+
+| Asset | File | Tool |
+|---|---|---|
+| Subagent | `.claude/agents/code-reviewer-banking-domain.md` | Read, Grep, Glob, Bash |
+| Subagent | `.claude/agents/security-reviewer.md` | Read, Grep, Glob |
+| Subagent | `.claude/agents/performance-reviewer.md` | Read, Grep, Glob |
+| Subagent | `.claude/agents/rest-contract-reviewer.md` | Read, Grep, Glob |
+| Agent OpenCode (esecutore) | `.opencode/agents/reviewer.md` | read/grep/glob (no edit/write/bash) |
+| Orchestrator | `code-review-suite.py` | Python 3.10, `asyncio` |
+
+**Stack**: Python 3.10 + libreria standard (`asyncio`, `subprocess` via `create_subprocess_exec`). Nessuna dipendenza da `claude-agent-sdk` (Path B) — l'orchestrator invoca `opencode run --agent reviewer --format json --auto` come subprocess per ciascun subagent, iniettando il contenuto di `.claude/agents/{name}.md` come prompt. Parallelismo via `asyncio.gather(..., return_exceptions=True)`.
+
+**Come si invoca**:
+```bash
+python code-review-suite.py "$(git show <sha> -- <file>)"
+```
+
+**Esempio di run reale**: 4 subagent lanciati con stagger di 3s sul commit `c594a45` (la validazione amount del G1). Findings reali trovati, tra cui un problema di scala decimale non coperto dalla nuova validazione e la conferma multi-subagent del problema di idempotency già noto. Run trace completo (log console + report `.md`): [docs/claude-code-assets/code-review-suite-run.md](docs/claude-code-assets/code-review-suite-run.md).
