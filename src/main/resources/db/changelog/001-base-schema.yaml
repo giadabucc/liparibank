@@ -1,0 +1,78 @@
+databaseChangeLog:
+  - changeSet:
+      id: 001-customer
+      author: lipari-bootcamp
+      changes:
+        - createTable:
+            tableName: customer
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: first_name, type: VARCHAR(80), constraints: { nullable: false } }
+              - column: { name: last_name, type: VARCHAR(80), constraints: { nullable: false } }
+              - column: { name: fiscal_code, type: VARCHAR(32), constraints: { nullable: false, unique: true } }
+              - column: { name: created_at, type: TIMESTAMP, defaultValueComputed: CURRENT_TIMESTAMP }
+
+  - changeSet:
+      id: 002-account
+      author: lipari-bootcamp
+      changes:
+        - createTable:
+            tableName: account
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: customer_id, type: BIGINT, constraints: { nullable: false, foreignKeyName: fk_account_customer, references: "customer(id)" } }
+              - column: { name: iban, type: VARCHAR(34), constraints: { nullable: false, unique: true } }
+              - column: { name: balance, type: DECIMAL(19,2), constraints: { nullable: false } }
+              - column: { name: currency, type: VARCHAR(3), defaultValue: "EUR", constraints: { nullable: false } }
+              - column: { name: status, type: VARCHAR(16), defaultValue: "ACTIVE", constraints: { nullable: false } }
+              - column: { name: created_at, type: TIMESTAMP, defaultValueComputed: CURRENT_TIMESTAMP }
+
+  - changeSet:
+      id: 003-movement
+      author: lipari-bootcamp
+      changes:
+        - createTable:
+            tableName: movement
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: account_id, type: BIGINT, constraints: { nullable: false, foreignKeyName: fk_movement_account, references: "account(id)" } }
+              - column: { name: type, type: VARCHAR(16), constraints: { nullable: false } }
+              - column: { name: amount, type: DECIMAL(19,2), constraints: { nullable: false } }
+              - column: { name: counterparty_account_id, type: BIGINT }
+              - column: { name: description, type: VARCHAR(255) }
+              - column: { name: executed_at, type: TIMESTAMP, defaultValueComputed: CURRENT_TIMESTAMP }
+        - createIndex:
+            tableName: movement
+            indexName: idx_movement_account_executed_at
+            columns:
+              - column: { name: account_id }
+              - column: { name: executed_at }
+
+  - changeSet:
+      id: 004-app-user
+      author: lipari-bootcamp
+      changes:
+        - createTable:
+            tableName: app_user
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: username, type: VARCHAR(64), constraints: { nullable: false, unique: true } }
+              - column: { name: password_hash, type: VARCHAR(255), constraints: { nullable: false } }
+              - column: { name: customer_id, type: BIGINT, constraints: { foreignKeyName: fk_user_customer, references: "customer(id)" } }
+
+  - changeSet:
+      id: 005-seed-demo-data
+      author: lipari-bootcamp
+      changes:
+        - sql:
+            sql: |
+              INSERT INTO customer (first_name, last_name, fiscal_code) VALUES
+                ('Alice', 'Rossi', 'RSSALC85M01H501Z'),
+                ('Bob', 'Bianchi', 'BNCBBL90H15F205X');
+              INSERT INTO account (customer_id, iban, balance) VALUES
+                (1, 'IT60X0542811101000000123456', 1000.00),
+                (2, 'IT60X0542811101000000234567', 500.00);
+              -- password BCrypt hash di "alice123" e "bob123"
+              INSERT INTO app_user (username, password_hash, customer_id) VALUES
+                ('alice', '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', 1),
+                ('bob',   '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', 2);

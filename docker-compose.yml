@@ -1,0 +1,19 @@
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: liparibank
+      MYSQL_USER: lipariuser
+      MYSQL_PASSWORD: liparipassword
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-prootpassword"]
+      interval: 10s
+      retries: 5
+    volumes:
+      - mysql-data:/var/lib/mysql
+
+volumes:
+  mysql-data:

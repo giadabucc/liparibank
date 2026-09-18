@@ -1,0 +1,12 @@
+.opencode/opencode.local.json
+.opencode/node_modules/
+
+# Maven build output
+target/
+
+# IDE / OS
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db
