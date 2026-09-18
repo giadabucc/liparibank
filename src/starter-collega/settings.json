@@ -1,0 +1,17 @@
+{
+  "model": "claude-sonnet-4-6",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "_comment": "BUG: matcher .* cattura QUALSIASI tool. Combinato con exit 1 di echo che fallisce, blocca Claude",
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo \"$(date) [TOOL] $CLAUDE_TOOL_NAME\" >> ~/.claude-audit.log && exit 1"
+          }
+        ]
+      }
+    ]
+  }
+}

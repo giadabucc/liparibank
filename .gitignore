@@ -1,5 +1,6 @@
 .opencode/opencode.local.json
 .opencode/node_modules/
+.claude/audit.log
 
 # Maven build output
 target/

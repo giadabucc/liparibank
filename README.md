@@ -232,6 +232,12 @@ Asset creati per il project work Claude Code (G1), con evidenza di esecuzione re
 - **Esecuzione**: **inline** — condivide il contesto della conversazione in corso.
 - **Run trace reale (attivazione automatica, skill mai nominata esplicitamente)**: [docs/claude-code-assets/skill-run.md](docs/claude-code-assets/skill-run.md).
 
+### Config — `.claude/settings.json`
+
+- **Cosa fa**: `model: sonnet` (alias portabile), `permissions.allow` su `Read`/`Grep`/`Glob` (niente prompt di conferma per operazioni read-only), hook `PostToolUse` di audit log su tutti i tool (matcher `.*`) che scrive una riga JSON (`ts`, `tool`, `input`) su `.claude/audit.log` per ogni tool call.
+- **Perché il comando dell'hook è `try {...} catch {}; exit 0`**: `src/starter-collega/settings.json` ha un hook `PostToolUse` che fa `exit 1` dopo il log — un hook con exit code non-zero fa fallire la tool call agli occhi di Claude Code, e con matcher `.*` questo blocca **ogni** tool, paralizzando la CLI al primo prompt. Il mio hook non fallisce mai (testato anche con input vuoto/malformato: exit code sempre `0`), quindi logga senza mai bloccare nulla.
+- **Prova che scatta davvero**: verificato live in sessione — dopo aver scritto il file, ogni tool call successiva (inclusa una `Read` di prova) è comparsa in `.claude/audit.log` senza bisogno di riavviare Claude Code.
+
 ### Subagent vs skill vs slash command
 
 - **Subagent**: contesto isolato, tool/model propri. Attivabile sia automaticamente (Claude legge la `description` e delega da solo) sia esplicitamente — l'invocazione non è ciò che lo distingue dalla skill.
@@ -241,7 +247,25 @@ Asset creati per il project work Claude Code (G1), con evidenza di esecuzione re
 
 ## Difetti dello starter trovati e corretti
 
-Durante il setup di questo project work sono emersi i seguenti difetti nello starter originale. La cartella `.opencode/` (config per OpenCode CLI, "Path B" del bootcamp) è stata lasciata nel repo — esclusi `node_modules/` e `opencode.local.json` — come testimonianza "as-found".
+### Difetti nello starter-collega (`src/starter-collega/`)
+
+Ho scelto di **implementare da zero** (opzione esplicitamente prevista dal PW) invece di partire dal codice di Gino, ma prima ho letto i suoi 4 bug documentati per non riprodurli. Eccoli, con dove si trova la correzione nel mio codice:
+
+1. **Hook `PostToolUse` con `exit 1` blocca tutta la CLI.** `src/starter-collega/settings.json` — hook con matcher `.*` che fa `echo ... && exit 1` dopo ogni tool call. Un hook che ritorna exit code non-zero fa considerare fallita la tool call: con matcher `.*` **ogni** Read/Grep/Bash fallisce, Claude Code si paralizza al primo prompt.
+   **Fix applicato nel mio `.claude/settings.json`**: il comando dell'hook di audit è avvolto in `try {...} catch {}; exit 0` — logga se può, non fallisce mai, non blocca nessuna tool call anche se il parsing dell'input va male. Testato con input valido e input vuoto/rotto: `exit code` sempre `0` in entrambi i casi.
+
+2. **Subagent con `tools: ["*"]`.** `src/starter-collega/parte-3/code-reviewer.md` — allowlist permissiva: un reviewer che può usare *qualsiasi* tool, incluso `Bash(rm -rf ...)`, se il prompt utente è ambiguo ("elimina i file inutilizzati").
+   **Fix applicato**: il mio `.claude/agents/code-reviewer-banking-domain.md` usa `tools: Read, Grep, Glob, Bash` — niente `Edit`/`Write`, coerente col fatto che è un reviewer, non un fixer.
+
+3. **Subagent con `description` troppo generica.** `src/starter-collega/parte-2/code-reviewer.md` — `description: Reviewer di codice`: nessuna keyword di dominio, il routing automatico non scatta mai, il subagent è invocabile solo esplicitamente.
+   **Fix applicato**: la mia `description` parte con "Use proactively before merging any PR that touches domain/movement, domain/account o domain/user" ed è ricca di keyword di dominio (transazioni, idempotency, BigDecimal, JWT) — vedi [docs/claude-code-assets/subagent-run.md](docs/claude-code-assets/subagent-run.md) per la prova che il routing funziona.
+
+4. **Skill con `allowed-tools` che include `Edit`/`Write`.** `src/starter-collega/SKILL.md` — una skill di solo-check (`compliance-aml-check`) con `allowed-tools: [Read, Grep, Glob, Edit, Write, Bash]`: Claude può decidere di "fixare" un problema invece di segnalarlo, sforando lo scope dichiarato (check-only).
+   **Fix applicato**: la mia skill usa `allowed-tools: Read, Grep, Glob` — nessuna possibilità di modificare file, solo di leggerli e produrre findings.
+
+### Difetti extra trovati (cartella `.opencode/`, non richiesti dal PW ma reali)
+
+Nel repo esisteva anche una cartella `.opencode/` (config per OpenCode CLI, "Path B" del bootcamp) con un proprio tentativo di subagent/skill — diversa da `starter-collega/` e non richiesta esplicitamente dal testo del PW, ma con difetti reali che ho comunque documentato. Lasciata nel repo — esclusi `node_modules/` e `opencode.local.json` — come testimonianza "as-found".
 
 1. **Subagent e skill nella cartella sbagliata.** `code-reviewer-banking-domain.md` e `compliance-aml-check/SKILL.md` esistevano già, ma sotto `.opencode/agents/` e `.opencode/skills/` — cartelle lette da OpenCode CLI, non da Claude Code, che quindi non li avrebbe mai caricati.
    **Fix**: ricreati sotto `.claude/agents/` e `.claude/skills/`.

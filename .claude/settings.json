@@ -1,0 +1,25 @@
+{
+  "model": "sonnet",
+  "permissions": {
+    "allow": [
+      "Read",
+      "Grep",
+      "Glob"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "try { $obj = ($input | Out-String) | ConvertFrom-Json; [ordered]@{ ts = (Get-Date).ToString('o'); tool = $obj.tool_name; input = $obj.tool_input } | ConvertTo-Json -Compress | Add-Content -Path \".claude/audit.log\" } catch {}; exit 0",
+            "shell": "powershell",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
