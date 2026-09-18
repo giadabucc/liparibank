@@ -214,6 +214,20 @@ Dipendenze di test: `spring-boot-starter-test`, `testcontainers:mysql`.
 
 ---
 
+## Decidi e motiva
+
+**`code-reviewer-banking-domain`: resta generalista o lo affianchi a specializzati (security, performance, REST contract)?**
+Resta generalista per questo G1. Criterio: ogni subagent invocato è un contesto isolato a sé — più subagent specializzati in parallelo significa più context window separate, più costo e più latenza per singola PR review, in cambio di findings più a fuoco per categoria. Ha senso dividerlo quando il volume di PR giustifica la parallelizzazione, o quando emerge rumore sistematico in una categoria che il generalista continua a mancare — nessuno dei due criteri è ancora verificato qui. A supporto: il nostro subagent generalista ha comunque trovato un IDOR e una race condition mai citati nella sua checklist esplicita (vedi [subagent-run.md](docs/claude-code-assets/subagent-run.md)), segno che un buon framing da senior reviewer copre già molto prima di dover specializzare.
+
+**Policy AML: skill `compliance-aml-check` o MCP server?**
+Skill, non MCP server. Criterio: la skill impacchetta conoscenza/procedura statica da caricare nel contesto — la policy AML è un manuale operativo che non cambia a runtime, non un'azione da eseguire. Un MCP server serve quando serve agire o interrogare un sistema esterno live (es. chiamare davvero una lista sanzioni OFAC, interrogare un DB transazioni in tempo reale) — coerente con il `finbank-mcp` separato previsto per il G3 del bootcamp, dedicato proprio a quel tipo di azioni.
+
+**3 asset aggiuntivi per il LipariBank**
+
+- **`test-generator-banking` → subagent.** Deve scrivere file di test (serve `Write`/`Edit`), un ruolo incompatibile con un reviewer che deve restare read-only — è la stessa lezione del Bug 1 di Gino (`tools: ["*"]`): ruoli diversi, tool diversi, mai nello stesso agente. Contesto isolato perché esplorare a fondo i casi limite (transfer negativo, self-transfer, race condition) richiede spazio che non deve inquinare la conversazione principale. Motivato da un finding reale di oggi: "M5 — nessun test per la validazione introdotta dalla PR" (vedi run trace del subagent).
+- **`secret-scan-guard` → hook.** Deve bloccare deterministicamente un'azione pericolosa (es. `PreToolUse` su `Bash(git commit*)` o su `Edit`/`Write` con path tipo `*.local.json`, `*.env`) prima che accada, non solo segnalarla a posteriori — l'unico dei quattro tipi che può dire "no" in modo affidabile, senza dipendere dal giudizio probabilistico di un modello. Motivato da un ritrovamento reale di oggi: l'API key in chiaro in `opencode.local.json`, oggi protetta solo da un `.gitignore` corretto a mano.
+- **`/pr-writeup-lipari` → slash command.** Template per generare la sezione README FASI / descrizione PR nello stile standard Lipari a fine fase — cosa fatta a mano più volte durante questo stesso project work. Invocazione esplicita perché è un'azione di autoría deliberata ("chiudo la fase adesso"), non un check che deve scattare da solo: per questo slash command è più adatto di una skill a routing automatico.
+
 ## Claude Code Assets
 
 Asset creati per il project work Claude Code (G1), con evidenza di esecuzione reale.
