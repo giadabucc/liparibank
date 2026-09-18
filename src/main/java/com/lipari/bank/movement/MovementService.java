@@ -1,5 +1,6 @@
 package com.lipari.bank.movement;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -28,6 +29,14 @@ public class MovementService {
      */
     @Transactional
     public TransferResponse transfer(TransferRequest req) {
+        // Difesa in profondità: @DecimalMin su TransferRequest copre solo l'ingresso via
+        // MovementController (@Valid). Questo metodo è pubblico e transazionale: se in futuro
+        // viene invocato da un altro path (job batch, chiamata interna, endpoint gRPC) che
+        // bypassa il controller, un amount nullo/<=0 non deve poter muovere denaro.
+        if (req.getAmount() == null || req.getAmount().compareTo(BigDecimal.ZERO) <= 0) {
+            throw new IllegalArgumentException("amount must be greater than zero");
+        }
+
         if (req.getFromAccountId().equals(req.getToAccountId())) {
             throw new IllegalArgumentException("fromAccountId and toAccountId must differ");
         }
